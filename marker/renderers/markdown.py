@@ -193,6 +193,7 @@ class MarkdownOutput(BaseModel):
     markdown: str
     images: dict
     metadata: dict
+    debug_data: dict = {}
 
 
 class MarkdownRenderer(HTMLRenderer):
@@ -226,5 +227,6 @@ class MarkdownRenderer(HTMLRenderer):
         return MarkdownOutput(
             markdown=markdown,
             images=images,
-            metadata=self.generate_document_metadata(document, document_output)
+            metadata=self.generate_document_metadata(document, document_output),
+            debug_data=self.generate_document_debug_data(document, document_output)
         )

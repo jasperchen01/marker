@@ -122,3 +122,6 @@ class BaseRenderer:
             images[block_output.id] = self.extract_image(document, block_output.id, to_base64=True)
 
         return str(soup), images
+    
+    def generate_document_debug_data(self, document: Document, document_output):
+        return {}

@@ -398,95 +398,143 @@ class LineBuilder(BaseBuilder):
         page_size
     ):
         # When provider lines is empty or no inline math detected, return provider lines
+        # 若提供的文本行列表为空，或者未检测到内联数学公式的文本行，直接返回提供的文本行列表
         if not provider_lines or not text_lines:
             return provider_lines
 
+        # 筛选出水平的提供文本行，排除垂直的文本行
+        # 这里通过比较文本行的高度和宽度来判断是否为水平，乘以 5 是为了考虑公式内的小方块，但过滤掉大的垂直文本行
         horizontal_provider_lines = [
             (j, provider_line) for j, provider_line in enumerate(provider_lines)
             if provider_line.line.polygon.height < provider_line.line.polygon.width * 5 # Multiply to account for small blocks inside equations, but filter out big vertical lines
         ]
+        # 提取水平提供文本行的边界框
         provider_line_boxes = [p.line.polygon.bbox for _, p in horizontal_provider_lines]
+        # 对检测到的文本行的多边形进行缩放，并提取其边界框
         math_line_boxes = [PolygonBox(polygon=m.polygon).rescale(image_size, page_size).bbox for m in text_lines]
 
+        # 计算提供的水平文本行边界框和检测到的数学文本行边界框之间的重叠区域
         overlaps = matrix_intersection_area(provider_line_boxes, math_line_boxes)
 
         # Find potential merges
+        # 查找潜在的合并项，使用 defaultdict 方便存储每个检测到的数学文本行对应的提供文本行索引
         merge_lines = defaultdict(list)
         for i in range(len(provider_line_boxes)):
+            # 计算当前提供文本行与所有检测到的数学文本行的最大重叠百分比
             max_overlap_pct = np.max(overlaps[i]) / max(1, horizontal_provider_lines[i][1].line.polygon.area)
+            # 如果最大重叠百分比小于设定的最小重叠百分比阈值，则跳过该提供文本行
             if max_overlap_pct <= self.line_inline_min_overlap_pct:
                 continue
 
+            # 找到与当前提供文本行重叠最大的检测到的数学文本行的索引
             best_overlap = np.argmax(overlaps[i])
+            # 将当前提供文本行的索引添加到对应检测到的数学文本行的潜在合并列表中
             merge_lines[best_overlap].append(i)
 
         # Filter to get rid of detected lines that include multiple provider lines
+        # 过滤合并项，去除包含多个不连续提供文本行的检测到的数学文本行
         filtered_merge_lines = defaultdict(list)
         for line_idx in merge_lines:
+            # 用于存储连续的提供文本行索引
             merge_segment = []
+            # 记录上一个提供文本行的多边形，用于判断是否连续
             prev_line = None
             for ml in merge_lines[line_idx]:
+                # 获取当前提供文本行的多边形
                 line = horizontal_provider_lines[ml][1].line.polygon
                 if prev_line:
+                    # 判断当前提供文本行与上一个提供文本行在垂直方向上是否接近
                     close = (
                         abs(line.y_start - prev_line.y_start) < self.inline_math_line_vertical_merge_threshold
                         or
                         abs(line.y_end - prev_line.y_end) < self.inline_math_line_vertical_merge_threshold
                     )
                 else:
+                    # 第一个提供文本行默认认为是连续的
                     # First line
                     close = True
 
                 prev_line = line
                 if close:
+                    # 如果连续，则添加到当前合并段中
                     merge_segment.append(ml)
                 else:
                     if merge_segment:
+                        # 如果合并段不为空，则添加到过滤后的合并列表中
                         filtered_merge_lines[line_idx].append(merge_segment)
+                    # 开始一个新的合并段
                     merge_segment = [ml]
             if merge_segment:
+                # 如果最后一个合并段不为空，则添加到过滤后的合并列表中
                 filtered_merge_lines[line_idx].append(merge_segment)
 
         # Handle the merging
+        # 处理合并操作
+        # 用于记录已经合并的提供文本行的索引
         already_merged = set()
+        # 存储所有潜在的合并提供文本行的索引
         potential_merges = []
         for line_idx in filtered_merge_lines:
+            # 将过滤后的合并列表中的所有提供文本行索引添加到潜在合并列表中
             potential_merges.extend(chain.from_iterable(filtered_merge_lines[line_idx]))
+        # 将潜在合并列表转换为集合，方便后续查找
         potential_merges = set(potential_merges)
+        # 筛选出未参与潜在合并的提供文本行
         out_provider_lines = [(i, p) for i, p in enumerate(provider_lines) if i not in potential_merges]
         for line_idx in filtered_merge_lines:
+            # 获取当前检测到的数学文本行
             text_line = text_lines[line_idx]
             for merge_section in filtered_merge_lines[line_idx]:
+                # 过滤掉已经合并的提供文本行
                 merge_section = [m for m in merge_section if m not in already_merged]
                 if len(merge_section) == 0:
+                    # 如果合并段为空，则跳过
                     continue
                 elif len(merge_section) == 1:
+                    # 如果合并段只有一个提供文本行
                     provider_idx = merge_section[0]
+                    # 获取该提供文本行
                     merged_line = provider_lines[provider_idx]
                     # Only add math format to single lines if the detected line is math
+                    # 如果检测到的数学文本行是数学公式，则为该提供文本行添加数学格式
                     if text_line.math:
                         self.add_math_span_format(merged_line)
+                    # 将合并后的文本行添加到输出列表中
                     out_provider_lines.append((provider_idx, merged_line))
+                    # 标记该提供文本行已合并
                     already_merged.add(merge_section[0])
                 else:
+                    # 如果合并段有多个提供文本行
+                    # 对合并段进行排序
                     merge_section = sorted(merge_section)
+                    # 用于存储合并后的文本行
                     merged_line = None
+                    # 获取合并段中最小的索引
                     min_idx = min(merge_section)
                     for idx in merge_section:
+                        # 深拷贝当前提供文本行
                         provider_line = deepcopy(provider_lines[idx])
                         if merged_line is None:
+                            # 如果合并后的文本行为空，则将当前提供文本行作为合并后的文本行
                             merged_line = provider_line
                         else:
+                            # 合并当前提供文本行到合并后的文本行中
                             # Combine the spans of the provider line with the merged line
                             merged_line = merged_line.merge(provider_line)
                             # Add math regardless, since we assume heavily broken lines are math lines
+                            # 无论如何都添加数学格式，因为我们假设严重断开的行是数学行
                             self.add_math_span_format(merged_line)
+                        # 标记该提供文本行已合并
                         already_merged.add(idx) # Prevent double merging
+                    # 将合并后的文本行添加到输出列表中
                     out_provider_lines.append((min_idx, merged_line))
 
         # Sort to preserve original order
+        # 对输出的提供文本行进行排序，以保持原始顺序
         out_provider_lines = sorted(out_provider_lines, key=lambda x: x[0])
+        # 提取排序后的提供文本行
         out_provider_lines = [p for _, p in out_provider_lines]
+        # 返回合并后的提供文本行列表
         return out_provider_lines
 
     def clear_line_text(self, provider_line):
