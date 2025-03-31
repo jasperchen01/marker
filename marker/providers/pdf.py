@@ -171,7 +171,15 @@ class PdfProvider(BaseProvider):
         return text
 
     def pdftext_extraction(self, doc: PdfDocument) -> ProviderPageLines:
+        """
+        使用 pdftext 方法从 PDF 文档中提取文本行和字符信息。
+
+        :param doc: PdfDocument 对象，表示要处理的 PDF 文档。
+        :return: 一个字典，键为页码，值为该页的文本行信息列表。
+        """
+        # 初始化一个空字典，用于存储每页的文本行信息
         page_lines: ProviderPageLines = {}
+        # 调用 dictionary_output 函数，从 PDF 文件中提取字符块信息
         page_char_blocks = dictionary_output(
             self.filepath,
             page_range=self.page_range,
@@ -181,36 +189,59 @@ class PdfProvider(BaseProvider):
             quote_loosebox=False,
             disable_links=self.disable_links
         )
+        # 为每个页面设置边界框信息
         self.page_bboxes = {i: [0, 0, page["width"], page["height"]] for i, page in zip(self.page_range, page_char_blocks)}
 
+        # 获取 Span 和 Line 类的引用
         SpanClass: Span = get_block_class(BlockTypes.Span)
         LineClass: Line = get_block_class(BlockTypes.Line)
 
+        # 遍历每个页面的字符块信息
         for page in page_char_blocks:
+            # 获取当前页面的页码
             page_id = page["page"]
+            # 初始化一个空列表，用于存储当前页面的文本行信息
             lines: List[ProviderOutput] = []
+            # 检查当前页面是否有效，如果无效则跳过该页面
             if not self.check_page(page_id, doc):
                 continue
 
+            # 遍历当前页面的每个文本块
             for block in page["blocks"]:
+                # 遍历当前文本块中的每一行
                 for line in block["lines"]:
+                    # 初始化一个空列表，用于存储当前行的文本片段信息
                     spans: List[Span] = []
+                    # 初始化一个空列表，用于存储当前行的字符信息
                     chars: List[List[Char]] = []
+                    # 遍历当前行中的每个文本片段
                     for span in line["spans"]:
+                        # 如果文本片段为空，则跳过该片段
                         if not span["text"]:
                             continue
+                        # 根据字体标志和字体名称确定字体格式
                         font_formats = self.font_flags_to_format(span["font"]["flags"]).union(self.font_names_to_format(span["font"]["name"]))
+                        # 获取字体名称，如果为空则使用默认值 "Unknown"
                         font_name = span["font"]["name"] or "Unknown"
+                        # 获取字体粗细，如果为空则使用默认值 0
                         font_weight = span["font"]["weight"] or 0
+                        # 获取字体大小，如果为空则使用默认值 0
                         font_size = span["font"]["size"] or 0
+                        # 根据文本片段的边界框创建多边形对象
                         polygon = PolygonBox.from_bbox(span["bbox"], ensure_nonzero_area=True)
+                        # 为每个字符创建 Char 对象，并存储在列表中
                         span_chars = [Char(char=c['char'], polygon=PolygonBox.from_bbox(c['bbox'], ensure_nonzero_area=True), char_idx=c['char_idx']) for c in span["chars"]]
+                        # 检查文本片段是否有上标
                         superscript = span.get("superscript", False)
+                        # 检查文本片段是否有下标
                         subscript = span.get("subscript", False)
+                        # 对文本进行规范化处理，去除特殊空格并修复编码问题
                         text = self.normalize_spaces(fix_text(span["text"]))
+                        # 如果有上标或下标，去除文本前后的空格
                         if superscript or superscript:
                             text = text.strip()
 
+                        # 创建一个 Span 对象，并添加到 spans 列表中
                         spans.append(
                             SpanClass(
                                 polygon=polygon,
@@ -228,9 +259,13 @@ class PdfProvider(BaseProvider):
                                 has_subscript=subscript
                             )
                         )
+                        # 将当前文本片段的字符信息添加到 chars 列表中
                         chars.append(span_chars)
+                    # 根据当前行的边界框创建多边形对象
                     polygon = PolygonBox.from_bbox(line["bbox"], ensure_nonzero_area=True)
+                    # 确保 spans 和 chars 列表的长度一致
                     assert len(spans) == len(chars)
+                    # 创建一个 ProviderOutput 对象，并添加到 lines 列表中
                     lines.append(
                         ProviderOutput(
                             line=LineClass(polygon=polygon, page_id=page_id),
@@ -238,8 +273,10 @@ class PdfProvider(BaseProvider):
                             chars=chars
                         )
                     )
+            # 检查当前页面的文本行是否有效，如果有效则添加到 page_lines 字典中
             if self.check_line_spans(lines):
                 page_lines[page_id] = lines
+            # 存储当前页面的引用信息
             self.page_refs[page_id] = page["refs"]
 
         return page_lines

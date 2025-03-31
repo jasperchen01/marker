@@ -230,18 +230,36 @@ class Block(BaseModel):
                     break
 
     def render(self, document: Document, parent_structure: Optional[List[str]] = None, section_hierarchy: dict | None = None):
+        """
+        渲染当前块及其子块，并生成 BlockOutput 对象。
+
+        :param document: 文档对象，包含所有块的信息。
+        :param parent_structure: 父结构列表，用于传递父块的结构信息。
+        :param section_hierarchy: 节层次结构字典，用于跟踪文档的节结构。
+        :return: 包含渲染后的 HTML、多边形、ID、子块和节层次结构的 BlockOutput 对象。
+        """
+        # 存储子块渲染后的内容
         child_content = []
+        # 如果没有提供节层次结构，则初始化一个空字典
         if section_hierarchy is None:
             section_hierarchy = {}
+        # 分配当前块的节层次结构
         section_hierarchy = self.assign_section_hierarchy(section_hierarchy)
 
+        # 如果当前块有子块结构
         if self.structure is not None and len(self.structure) > 0:
+            # 遍历子块的 ID
             for block_id in self.structure:
+                # 获取子块对象
                 block = document.get_block(block_id)
+                # 递归渲染子块
                 rendered = block.render(document, self.structure, section_hierarchy)
-                section_hierarchy = rendered.section_hierarchy.copy()  # Update the section hierarchy from the peer blocks
+                # 更新节层次结构，从同级块中获取最新的节层次结构
+                section_hierarchy = rendered.section_hierarchy.copy()
+                # 将渲染后的子块添加到子内容列表中
                 child_content.append(rendered)
 
+        # 返回 BlockOutput 对象，包含渲染后的 HTML、多边形、ID、子块和节层次结构
         return BlockOutput(
             html=self.assemble_html(document, child_content, parent_structure),
             polygon=self.polygon,
